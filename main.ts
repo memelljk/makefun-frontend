@@ -113,6 +113,10 @@ const app = countApp(join(out, 'app'), '', { entries: 0, bytes: 0 });
 if (app.entries > CAPS.app_max_files) throw new Error('self-check: app/ holds ' + app.entries + ' entries, over the cap');
 if (app.bytes > CAPS.app_max_bytes) throw new Error('self-check: app/ is ' + app.bytes + ' bytes, over the cap');
 
-const totalsLine = new TextDecoder().decode(dossier).split('\n').find((l) => l.startsWith('Totals:'));
+// The dossier is a JSON document; its text field opens with the Load block,
+// whose first line is the Totals line this hand-in is judged by.
+const dossierText = JSON.parse(new TextDecoder().decode(dossier)).text;
+const totalsLine = String(dossierText).split('\n').find((l) => l.startsWith('Totals:'));
+if (!totalsLine) throw new Error('self-check: the dossier text holds no Totals line');
 console.log('Handed in app/ (' + app.entries + ' entries, ' + app.bytes + ' bytes) and ' + shots.length + ' screenshots: ' + shots.join(', '));
-console.log(totalsLine ?? 'Totals line not found in the dossier');
+console.log(totalsLine);
