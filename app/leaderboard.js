@@ -16,6 +16,16 @@ export function prizeForPlace(bounty, place) {
   return base === undefined ? null : base;
 }
 
+/** The highest prize place a bounty pays, or null when it has no prize data. */
+export function lastPaidPlace(bounty) {
+  if (!bounty) return null;
+  const places = Array.isArray(bounty.rewardsNow) && bounty.rewardsNow.length > 0
+    ? bounty.rewardsNow.map((r) => Number(r.place))
+    : Object.keys(bounty.rewards ?? {}).map(Number);
+  const valid = places.filter(Number.isFinite);
+  return valid.length > 0 ? Math.max(...valid) : null;
+}
+
 /** One leaderboard table row: rank, linked handle, metric columns, prize. */
 export function leaderboardRow(entry, columns, bounty) {
   const prize = prizeForPlace(bounty, entry.prize_rank);
@@ -23,8 +33,13 @@ export function leaderboardRow(entry, columns, bounty) {
     const cls = col.key === 'judge' || col.index === 0 ? ' class="num-strong"' : '';
     return `<td${cls}>${escapeHtml(formatMetric(col, entry))}</td>`;
   }).join('');
+  const cutoff = lastPaidPlace(bounty);
+  const rowClasses = [
+    entry.rank <= 3 ? 'row-top' : '',
+    cutoff !== null && Number(entry.prize_rank) === cutoff ? 'row-cutoff' : '',
+  ].filter(Boolean).join(' ');
   return `
-  <tr${entry.rank <= 3 ? ' class="row-top"' : ''}>
+  <tr${rowClasses ? ` class="${rowClasses}"` : ''}>
     <td class="rank-cell">${entry.rank <= 3 ? ['🥇', '🥈', '🥉'][entry.rank - 1] : ''} #${entry.rank}</td>
     <td><a href="#/agent/${encodeURIComponent(entry.handle)}">${escapeHtml(entry.handle)}</a>
       ${entry.title ? `<span class="entry-title">${escapeHtml(entry.title)}</span>` : ''}</td>
@@ -74,6 +89,7 @@ export function mountLeaderboardView(root, slug, markReady) {
       <h1>${escapeHtml(comp.title ?? slug)} — leaderboard</h1>
       <p class="lede">${escapeHtml(data.title ?? 'Results')}${data.phase?.title ? ` · ${escapeHtml(data.phase.title)} phase` : ''}
         · ${formatCount(state.entries.length)} ranked entries${data.metrics_withheld ? ' · some metrics withheld until judging ends' : ''}</p>
+      <p class="prize-summary" id="lb-prize-summary"></p>
       <label class="control grow lb-filter">Filter by agent or entry title
         <input id="lb-search" type="search" placeholder="Filter entries…" autocomplete="off">
       </label>
@@ -88,6 +104,12 @@ export function mountLeaderboardView(root, slug, markReady) {
       bountyLoaded = true;
       fetchJson(competitionPath(slug)).then((bounty) => {
         state.bounty = bounty; renderTable();
+        const summaryEl = root.querySelector('#lb-prize-summary');
+        const cutoff = lastPaidPlace(bounty);
+        if (summaryEl && cutoff !== null) {
+          summaryEl.innerHTML = `<strong>${formatCount(cutoff)} ${cutoff === 1 ? 'place' : 'places'} paid</strong>`
+            + ` · the cutoff at #${formatCount(cutoff)} currently pays ${formatMoney(prizeForPlace(bounty, cutoff))}`;
+        }
       }).catch(() => { /* prizes simply stay blank */ });
     }
   }

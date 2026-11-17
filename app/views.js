@@ -140,7 +140,8 @@ export function mountBoardView(root, markReady) {
   });
 
   loadWithRevalidate(fetchBountyBoard(), renderBoard, (err) => {
-    listEl.innerHTML = `<div class="state state-error"><p>${escapeHtml(err.message)}</p><button type="button" onclick="location.reload()">Retry</button></div>`;
+    listEl.innerHTML = `<div class="state state-error"><p>${escapeHtml(err.message)}</p><button type="button" id="board-retry">Retry</button></div>`;
+    listEl.querySelector('#board-retry').addEventListener('click', () => location.reload());
     markReady();
   });
 }
@@ -188,6 +189,20 @@ export function rewardsTableRows(bounty) {
     <td class="num-strong">${formatMoney(rewards[place])}</td></tr>`).join('');
 }
 
+/**
+ * A one-line summary of a bounty's prize structure — how many places pay and
+ * the prize range — from the live rewardsNow amounts, falling back to the
+ * base rewards map. '' when the bounty carries no prize data at all.
+ */
+export function prizeSummaryLine(bounty) {
+  const amounts = Array.isArray(bounty.rewardsNow) && bounty.rewardsNow.length > 0
+    ? bounty.rewardsNow.map((r) => Number(r.amountUsd)).filter(Number.isFinite)
+    : Object.values(bounty.rewards ?? {}).map(Number).filter(Number.isFinite);
+  if (amounts.length === 0) return '';
+  return `<p class="prize-summary"><strong>${plural(amounts.length, 'place', 'places')} paid</strong>`
+    + ` · top prize ${formatMoney(Math.max(...amounts))} · smallest prize ${formatMoney(Math.min(...amounts))}</p>`;
+}
+
 /** Normalise a rules field (string, list of strings, or list of objects) to HTML list items. */
 export function rulesListItems(rules) {
   if (!rules) return '';
@@ -224,6 +239,7 @@ export function mountBountyView(root, slug, markReady) {
       </section>
       ${skills ? `<p class="skills">${skills}</p>` : ''}
       <h2>Rewards — paid from the live pot of ${formatMoney(bountyPot(b))}</h2>
+      ${prizeSummaryLine(b)}
       <div class="table-wrap"><table class="data-table rewards-table">
         <thead><tr><th>Place</th><th>Base prize</th><th>Share of entry fees</th><th>Pays now</th></tr></thead>
         <tbody>${rewardsTableRows(b)}</tbody>
@@ -233,7 +249,7 @@ export function mountBountyView(root, slug, markReady) {
         ${b.publishedAt ? `<div><dt>Published</dt><dd>${formatDateTime(b.publishedAt)}</dd></div>` : ''}
         ${b.opensAt ? `<div><dt>Entries opened</dt><dd>${formatDateTime(b.opensAt)}</dd></div>` : ''}
         <div><dt>Deadline</dt><dd>${formatDateTime(b.deadline)} (${formatTimeLeft(b.deadline)})</dd></div>
-        <div><dt>Status</dt><dd>${escapeHtml(b.status ?? '')}${b.acceptingSubmissions === false ? ' · not accepting submissions' : ''}</dd></div>
+        <div><dt>Status</dt><dd>${isOpenForEntries(b) ? 'Open for entries' : 'Entries closed'} (${escapeHtml(b.status ?? '')})${b.acceptingSubmissions === false ? ' · not accepting submissions' : ''}</dd></div>
       </dl>
       ${rules ? `<h2>Rules</h2><ul class="rules">${rules}</ul>` : ''}
       ${b.rulesNote ? `<p class="note">${escapeHtml(b.rulesNote)}</p>` : ''}

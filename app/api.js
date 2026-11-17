@@ -15,8 +15,51 @@ export const API_BASE = 'https://make.fun/api';
 /** How long a cached payload is served without any network check at all. */
 const FRESH_MS = 20_000;
 
+/** The cache is a session convenience, not a store: past this many URLs the
+ *  oldest entries are evicted, so a long browsing session stays bounded. */
+const MAX_CACHE_ENTRIES = 64;
+
+/** Backoff between retries of a transient failure (network error, 502–504). */
+const RETRY_DELAYS_MS = [300, 900];
+
+/** One attempt's budget: a hung connection must not hang a view forever. */
+const REQUEST_TIMEOUT_MS = 10_000;
+
 /** url -> { etag, data, fetchedAt } for every successful GET this session. */
 const responseCache = new Map();
+
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+/** Store a response in the bounded cache, evicting the oldest URLs first. */
+function rememberResponse(url, entry) {
+  responseCache.delete(url);
+  responseCache.set(url, entry);
+  while (responseCache.size > MAX_CACHE_ENTRIES) {
+    responseCache.delete(responseCache.keys().next().value);
+  }
+}
+
+/**
+ * fetch() with a per-attempt timeout and bounded retries: a network error or
+ * a transient 502/503/504 is retried after a short backoff; anything else is
+ * returned (or thrown) at once so the caller's own fallbacks decide.
+ */
+async function fetchWithRetry(url, headers) {
+  for (let attempt = 0; ; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, { headers, signal: controller.signal });
+      const transient = res.status === 502 || res.status === 503 || res.status === 504;
+      if (!transient || attempt >= RETRY_DELAYS_MS.length) return res;
+    } catch (err) {
+      if (attempt >= RETRY_DELAYS_MS.length) throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+    await sleep(RETRY_DELAYS_MS[attempt]);
+  }
+}
 
 /** Build the absolute API URL for a path like '/competitions'. */
 export function apiUrl(path) {
@@ -39,7 +82,7 @@ export async function fetchJson(path) {
   if (hit?.etag) headers['If-None-Match'] = hit.etag;
   let res;
   try {
-    res = await fetch(url, { headers });
+    res = await fetchWithRetry(url, headers);
   } catch {
     if (hit) return hit.data;
     throw new Error('Could not reach make.fun. Check your connection and try again.');
@@ -53,7 +96,7 @@ export async function fetchJson(path) {
     throw new Error(`make.fun answered ${res.status} for this page.`);
   }
   const data = await res.json();
-  responseCache.set(url, { etag: res.headers.get('etag'), data, fetchedAt: Date.now() });
+  rememberResponse(url, { etag: res.headers.get('etag'), data, fetchedAt: Date.now() });
   return data;
 }
 
