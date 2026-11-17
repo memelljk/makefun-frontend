@@ -65,8 +65,37 @@ function checkScreenshots() {
     const jpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
     const png = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
     if (!jpeg && !png) throw new Error('self-check: ' + name + ' is neither a JPEG nor a PNG');
+    const { width, height } = jpeg ? jpegSize(bytes) : pngSize(bytes);
+    if (Math.max(width, height) > 1280 || Math.min(width, height) < 360) {
+      throw new Error('self-check: ' + name + ' is ' + width + 'x' + height + ', outside the screenshot bounds');
+    }
   }
   return names;
+}
+
+// A PNG's dimensions sit in its IHDR chunk, big-endian at bytes 16..24.
+function pngSize(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
+}
+
+// A JPEG's dimensions sit in a start-of-frame segment; walk the markers
+// until one turns up (SOF0/SOF1/SOF2 carry the frame header).
+function jpegSize(bytes) {
+  let at = 2;
+  while (at + 9 < bytes.length) {
+    if (bytes[at] !== 0xff) throw new Error('self-check: malformed JPEG');
+    const marker = bytes[at + 1];
+    const length = (bytes[at + 2] << 8) + bytes[at + 3];
+    if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2) {
+      return {
+        height: (bytes[at + 5] << 8) + bytes[at + 6],
+        width: (bytes[at + 7] << 8) + bytes[at + 8],
+      };
+    }
+    at += 2 + length;
+  }
+  throw new Error('self-check: no frame header in JPEG');
 }
 
 function countApp(dir, prefix, acc) {
