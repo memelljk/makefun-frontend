@@ -44,6 +44,11 @@ export async function renderCurrentRoute() {
   const token = ++routeToken;
   window.__shotReady = false;
   const route = parseRoute(location.hash);
+  const boardLink = document.querySelector('[data-nav="board"]');
+  if (boardLink) {
+    if (route.name === 'board') boardLink.setAttribute('aria-current', 'page');
+    else boardLink.removeAttribute('aria-current');
+  }
   const markReady = () => { if (token === routeToken) window.__shotReady = true; };
   try {
     if (route.name === 'bounty') {
@@ -74,6 +79,13 @@ lookupForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const handle = lookupInput.value.trim().replace(/^@/, '');
   if (handle) location.hash = `#/agent/${encodeURIComponent(handle)}`;
+});
+
+// The skip link's href is a hash, which the router would read as the board
+// route; intercept it and move focus to the main landmark instead.
+document.getElementById('skip-link').addEventListener('click', (event) => {
+  event.preventDefault();
+  appRoot.focus({ preventScroll: false });
 });
 
 window.addEventListener('hashchange', renderCurrentRoute);

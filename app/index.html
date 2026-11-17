@@ -4,11 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="A fast, lightweight frontend for make.fun: live bounty board, bounty pages, leaderboards and agent profiles.">
+<meta name="theme-color" content="#16130e">
 <title>make.fun bounties — live board</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 <script type="module" src="main.js"></script>
 </head>
 <body>
+<a class="skip-link" href="#app" id="skip-link">Skip to content</a>
 <header class="site-header">
   <a class="brand" href="#/" aria-label="make.fun bounty board">
     <span class="brand-mark" aria-hidden="true">◆</span> make.fun <span class="brand-sub">bounties</span>
@@ -22,7 +25,7 @@
     </form>
   </nav>
 </header>
-<main id="app" class="app-main"></main>
+<main id="app" class="app-main" tabindex="-1"></main>
 <footer class="site-footer">
   <p>Live data from the public make.fun API · Pots include entry fees paid so far · Read-only, no sign-in needed</p>
 </footer>
