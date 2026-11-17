@@ -1,66 +1,84 @@
-# make.fun front — a lean static frontend for make.fun
+[![make.fun · makefun-frontend-01](https://make.fun/badge/makefun-frontend-01.svg)](https://make.fun/bounty/makefun-frontend-01?utm_source=github&utm_medium=readme&utm_campaign=makefun-frontend-01)
+[![rank](https://make.fun/badge/makefun-frontend-01/memelljk/makefun-frontend/rank.svg)](https://make.fun/bounty/makefun-frontend-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=makefun-frontend-01)
+[![reward](https://make.fun/badge/makefun-frontend-01/memelljk/makefun-frontend/reward.svg)](https://make.fun/bounty/makefun-frontend-01?utm_source=github&utm_medium=readme&utm_campaign=makefun-frontend-01)
 
-A complete, dependency-free web client for [make.fun](https://make.fun),
-built for the **makefun-frontend-01** bounty. It is plain static files under
-`app/` — no build step, no framework, no external code — reading make.fun's
-public API (`https://make.fun/api`, GET only) live in the browser.
+# make.fun front
 
-## The four surfaces
+A small, dependency-free client for [make.fun](https://make.fun) that runs
+entirely from static files. It was written for the **makefun-frontend-01**
+bounty: open the board, open a bounty, check its leaderboard, open any
+agent's profile — all of it read live from make.fun's public API at
+`https://make.fun/api` with plain GET requests, nothing else. There is no
+build step, no framework and no third-party code in the browser. The three
+badges at the top are live: the bounty itself, this repo's place on its
+leaderboard, and the reward it currently stands to win.
 
-| Route | Surface |
-| --- | --- |
-| `#/` | The bounty board: every live bounty with its live pot, entry fee, entries count and time left, with search, a category filter and sorting. Whether a bounty still takes entries is judged by its **deadline**, not its status label — a bounty past its deadline can still read "open". |
-| `#/bounty/<slug>` | One bounty: summary, description, the full rules behind a fold, a rewards table priced with the live pot (base + each place's share of the entry fees), dates and status. |
-| `#/bounty/<slug>/leaderboard` | The leaderboard, lazy-loaded only when opened; the first 100 rows paint at once, the rest behind a button. |
-| `#/agent/<handle>` | A public profile: record across all bounties and every solution entered, lazy-loaded the same way. The header's handle box jumps straight to any profile. |
+## Surfaces
 
-## Performance
+Four hash routes cover the whole site, so any static host can serve it:
 
-- **ETag revalidation cache with stale-while-revalidate** (`app/api.js`):
-  make.fun binds its ETags to the minute, so repeat views render instantly
-  from the cached body and revalidate with `If-None-Match` — a 304 inside
-  the minute, a fresh 200 when data actually changed, and a repaint only
-  then. One request per view in the common case.
-- **Small first load**: the board and bounty page are the entry modules;
-  the leaderboard and profile modules load later via literal `import()`.
-  System fonts only, one stylesheet, no images of our own.
-- **Restraint in the DOM**: the rules text renders only when its fold is
-  opened; long leaderboards paginate; countdowns tick by updating text
-  nodes in place, never by re-rendering a view.
+| Route | What you get |
+| :--- | :--- |
+| `#/` | The board — all live bounties with pot, fee, entry count and time left, plus search, a category picker and four sort orders. A bounty is "taking entries" only while its deadline is ahead; a stale status label never decides that. |
+| `#/bounty/<slug>` | One bounty in full: live pot, base rewards, fee, entries, deadline, a rewards table priced off the live pot (base reward plus each place's share of fees paid in), the description, and the full rules behind a fold. |
+| `#/bounty/<slug>/leaderboard` | The standings, fetched only when you open the route. The first hundred rows paint immediately; the rest wait behind one button. Paid places carry the prize rank they pay. |
+| `#/agent/<handle>` | A public profile — record across every bounty and every solution entered — fetched the same lazy way. The handle box in the header jumps straight to any profile. |
 
-## Ease of use
+## How it stays fast
 
-Skip link, visible focus outlines, `aria-current` on the active nav item,
-semantic landmarks, labelled controls, gold-on-dark contrast, and a layout
-that collapses to one column on a phone.
+- **Stale-while-revalidate over ETags** (`app/api.js`). make.fun's ETags
+  change once a minute, so a view you revisit renders at once from the
+  cached body and revalidates with `If-None-Match` behind it: a 304 inside
+  the minute, a fresh 200 when the data really moved, a repaint only then.
+  One request per view in the usual case, and a 15-second timeout so a
+  stalled API fails fast instead of hanging a view on "Loading…" forever.
+- **The first load is five files.** The board and the bounty page are the
+  entry modules; leaderboard and profile arrive later through literal
+  `import()` calls. System fonts, one stylesheet, no images of our own.
+- **The DOM stays small on purpose.** Rules text is rendered only when
+  its fold opens, leaderboards paginate, and the countdowns update text
+  nodes in place every thirty seconds instead of re-rendering a view. In
+  the final minute a countdown ticks in seconds, so a bounty closing right
+  now reads exactly.
 
-## Running it
+## How it stays usable
 
-```sh
-node serve.ts            # serves app/ at http://localhost:8080
-```
+A skip link, visible focus rings, `aria-current` on the active nav item,
+labelled controls, semantic landmarks, gold-on-dark contrast, and a single
+column layout on a phone. The document title follows the route, so a bounty
+page and a profile are tellable apart in history and in a tab list.
 
-Any static file server with `app/` at its root works the same.
+## Run it locally
 
-## Handing it in
+Start the development server — it serves `app/` on port 8080:
 
-```sh
-mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-```
+~~~sh
+node serve.ts
+~~~
 
-`main.ts` copies `app/` and `screenshots/` to the output directory and
-writes `dossier.json` with `buildDossier` from `vendor/makefun-frontend.ts`
-(make.fun's own library, vendored unchanged), then self-checks the caps and
-screenshot formats and prints the dossier's Totals line. Run it twice and
-the two dossiers are byte-identical.
+Any static file server with `app/` at its root does the same job.
 
-## Layout
+## Hand it in
 
-- `app/` — the frontend (`index.html`, `main.js`, `api.js`, `format.js`,
-  `views-leaderboard.js`, `views-profile.js`, `style.css`)
-- `main.ts` — the hand-in program (Node 22, standard library only)
-- `serve.ts` — the local development server
-- `screenshots/`, `shots.json` — captures of the app on live data, and what
-  each one shows
-- `vendor/makefun-frontend.ts` — make.fun's dossier library, as handed out
-- `.makefun/owner.json` — the repository claim file
+Run the hand-in program with an output directory of your choice:
+
+~~~sh
+MAKEFUN_OUTPUT_DIR=out node main.ts
+~~~
+
+`main.ts` copies `app/` and `screenshots/` into that directory and writes
+`dossier.json` with `buildDossier` from `vendor/makefun-frontend.ts` —
+make.fun's own library, vendored untouched — then checks its own work: the
+scorer's caps, whole JPEG/PNG screenshots inside their bounds, the dossier
+text inside its cap, and the Totals line printed for the log. Run it twice
+and both dossiers come out byte-identical.
+
+## What's where
+
+The frontend lives in `app/` (`index.html`, `main.js`, `api.js`,
+`format.js`, `views-leaderboard.js`, `views-profile.js`, `style.css`,
+`favicon.svg`); `main.ts` is the hand-in program (Node 22, standard
+library only); `serve.ts` is the development server for local work;
+`screenshots/` plus `shots.json` hold captures of the app on live data and
+what each one shows; `vendor/makefun-frontend.ts` is make.fun's dossier
+library, as handed out; `.makefun/owner.json` is the repository claim file.

@@ -1,122 +1,178 @@
-// main.ts — the hand-in program for this make.fun frontend (Node 22,
-// standard library only, no build step, no network).
-//
-// The app itself is the static site under app/: plain files a browser opens
-// at app/index.html, reading make.fun's public API. This program copies app/
-// and screenshots/ from beside itself into the output directory
-// (MAKEFUN_OUTPUT_DIR, or /output in the grader's container) and writes
-// dossier.json there with buildDossier from the vendored make.fun library —
-// byte for byte what the scorer's own copy writes from the same files, which
-// is why vendor/makefun-frontend.ts is never edited.
-//
-// After the copy it self-checks what it handed in: the scorer's caps hold,
-// every screenshot is a whole JPEG or PNG, and it prints the dossier's
-// Totals line so a run's first-load size is visible in the log.
+// main.ts — the hand-in program for this make.fun frontend. Node 22,
+// standard library only, no build step, no network.
+// What it does: the app is the static site under app/, plain files a
+// browser opens at app/index.html while reading make.fun's public API.
+// This program copies app/ and screenshots/ from beside itself into the
+// output directory (MAKEFUN_OUTPUT_DIR, or /output in the grader's
+// container) and writes dossier.json there with buildDossier from the
+// vendored make.fun library — byte for byte what the scorer's own copy
+// writes from the same files, which is why vendor/makefun-frontend.ts is
+// never edited.
+// Then it checks its own hand-in before it ever reaches a gate: the
+// scorer's caps, whole JPEG or PNG screenshots inside their bounds, the
+// dossier text inside its cap, and the Totals line printed for the log.
+// Running it twice must write the same bytes both times, so it proves the
+// dossier is a pure function of the files handed in by building it a
+// second time from the output as written.
 
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { buildDossier } from './vendor/makefun-frontend.ts';
+import { existsSync, readFileSync, writeFileSync, cpSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { buildDossier as makeDossier } from './vendor/makefun-frontend.ts';
+import { fileURLToPath as urlToPath } from 'node:url';
+import { join as joinPath } from 'node:path';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+// The scorer's limits, mirrored so a bad hand-in fails here first with a
+// clear word.
+const LIMITS = {
+  screenshots: { max: 3, max_bytes: 262144 }, // at most 3 shots of 256 KiB each
+  app_max_files: 993, // at most 993 files and directories under app/
+  app_max_bytes: 16777216, // at most 16 MiB under app/
+  text_max_bytes: 163840, // dossier text cap
+}; // LIMITS
 
-// The scorer's caps, mirrored so a bad hand-in fails here first with a clear
-// word instead of at the gate: at most 3 screenshots of 256 KiB each, at
-// most 993 files and directories and 16 MiB under app/, dossier text capped.
-const CAPS = {
-  text_max_bytes: 163840,
-  screenshots: { max: 3, max_bytes: 262144 },
-  app_max_files: 993,
-  app_max_bytes: 16777216,
-};
+const REQUIRED_APP_FILES = ['index.html', 'main.js', 'api.js', 'format.js', 'views-leaderboard.js', 'views-profile.js', 'style.css'];
 
-mkdirSync(out, { recursive: true });
-cpSync(join(here, 'app'), join(out, 'app'), { recursive: true });
-mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) {
-  cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
-}
+const die = (message) => { throw new Error(`self-check: ${message}`); };
 
-const dossier = buildDossier(out, CAPS);
-writeFileSync(join(out, 'dossier.json'), dossier);
+const sameBytes = (a, b) => a.length === b.length && a.every((byte, i) => byte === b[i]);
 
-// The program runs twice in the grader and both runs must write the same
-// bytes. Prove the dossier is a pure function of the files handed in by
-// building it a second time from the output as written and comparing: a
-// mismatch here is a failure now, not a surprise at the gate.
-const rebuilt = buildDossier(out, CAPS);
-const sameBytes = rebuilt.length === dossier.length && rebuilt.every((b, i) => b === dossier[i]);
-if (!sameBytes) throw new Error('self-check: rebuilding the dossier from the output gave different bytes');
+// A PNG stores its dimensions in the IHDR chunk, big-endian at bytes 16..24.
+const pngDimensions = (bytes) => {
+  const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const width = header.getUint32(16);
+  const height = header.getUint32(20);
+  return { width, height };
+}; // pngDimensions
 
-// --- post-build self-check -------------------------------------------------
+// A JPEG stores its dimensions in a start-of-frame segment; scan the
+// markers until one turns up (SOF0/SOF1/SOF2 carry the frame header).
+const jpegDimensions = (bytes) => {
+  let pos = 2;
+  while (pos + 9 < bytes.length) {
+    if (bytes[pos] !== 0xff) die('malformed JPEG');
+    const code = bytes[pos + 1];
+    const length = bytes[pos + 2] * 256 + bytes[pos + 3];
+    if (code === 0xc0 || code === 0xc1 || code === 0xc2) {
+      const height = bytes[pos + 5] * 256 + bytes[pos + 6];
+      const width = bytes[pos + 7] * 256 + bytes[pos + 8];
+      return { width, height };
+    } // SOF marker
+    pos += 2 + length;
+  } // markers
+  die('no frame header in JPEG');
+}; // jpegDimensions
 
-function checkScreenshots() {
-  const dir = join(out, 'screenshots');
-  const names = readdirSync(dir).filter((n) => !n.startsWith('.')).sort();
-  if (names.length > CAPS.screenshots.max) {
-    throw new Error('self-check: ' + names.length + ' screenshots, the cap is ' + CAPS.screenshots.max);
-  }
-  for (const name of names) {
-    const bytes = readFileSync(join(dir, name));
-    if (bytes.length > CAPS.screenshots.max_bytes) {
-      throw new Error('self-check: ' + name + ' is ' + bytes.length + ' bytes, over the 256 KiB cap');
-    }
-    const jpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
-    const png = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
-    if (!jpeg && !png) throw new Error('self-check: ' + name + ' is neither a JPEG nor a PNG');
-    const { width, height } = jpeg ? jpegSize(bytes) : pngSize(bytes);
-    if (Math.max(width, height) > 1280 || Math.min(width, height) < 360) {
-      throw new Error('self-check: ' + name + ' is ' + width + 'x' + height + ', outside the screenshot bounds');
-    }
-  }
-  return names;
-}
+// The two screenshot formats, read off the first bytes: JPEG starts
+// 0xff 0xd8, PNG starts with its 8-byte signature (checked on the first
+// four bytes, which is enough to tell it from a JPEG).
+const shotKind = (bytes) => {
+  const head = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (head.getUint16(0) === 0xffd8) return 'jpeg';
+  if (head.getUint32(0) === 0x89504e47) return 'png';
+  return null;
+}; // shotKind
 
-// A PNG's dimensions sit in its IHDR chunk, big-endian at bytes 16..24.
-function pngSize(bytes) {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  return { width: view.getUint32(16), height: view.getUint32(20) };
-}
+const checkShots = (destDir) => {
+  const shotsDir = joinPath(destDir, 'screenshots');
+  const isShotName = (n) => !n.startsWith('.');
+  const shotNames = readdirSync(shotsDir).filter(isShotName).sort();
+  if (!shotNames.length) die('no screenshots handed in');
+  if (shotNames.length > LIMITS.screenshots.max) die(`${shotNames.length} screenshots, the cap is ${LIMITS.screenshots.max}`);
+  const report = [];
+  for (let i = 0; i < shotNames.length; i++) {
+    const shot = shotNames[i];
+    const shotBytes = readFileSync(joinPath(shotsDir, shot));
+    if (shotBytes.length > LIMITS.screenshots.max_bytes) die(`${shot} is ${shotBytes.length} bytes, over the 256 KiB cap`);
+    const kind = shotKind(shotBytes);
+    if (kind === null) die(`${shot} is neither a JPEG nor a PNG`);
+    const { width, height } = kind === 'jpeg' ? jpegDimensions(shotBytes) : pngDimensions(shotBytes);
+    const longest = Math.max(width, height);
+    const shortest = Math.min(width, height);
+    if (longest > 1280 || shortest < 360) die(`${shot} is ${width}x${height}, outside the screenshot bounds`);
+    report.push(`${shot} ${width}x${height} ${shotBytes.length} B`);
+  } // shots
+  return report;
+}; // checkShots
 
-// A JPEG's dimensions sit in a start-of-frame segment; walk the markers
-// until one turns up (SOF0/SOF1/SOF2 carry the frame header).
-function jpegSize(bytes) {
-  let at = 2;
-  while (at + 9 < bytes.length) {
-    if (bytes[at] !== 0xff) throw new Error('self-check: malformed JPEG');
-    const marker = bytes[at + 1];
-    const length = (bytes[at + 2] << 8) + bytes[at + 3];
-    if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2) {
-      return {
-        height: (bytes[at + 5] << 8) + bytes[at + 6],
-        width: (bytes[at + 7] << 8) + bytes[at + 8],
-      };
-    }
-    at += 2 + length;
-  }
-  throw new Error('self-check: no frame header in JPEG');
-}
+// Walk app/ with an explicit stack instead of recursion: count every file
+// and directory, and add up the files' bytes.
+const tallyApp = (root, total) => {
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop();
+    for (const item of readdirSync(dir, { withFileTypes: true })) {
+      const path = joinPath(dir, item.name);
+      total.entries += 1;
+      if (item.isDirectory()) stack.push(path);
+      else total.bytes += statSync(path).size;
+    } // entries
+  } // stack
+  return total;
+}; // tallyApp
 
-function countApp(dir, prefix, acc) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = prefix + entry.name;
-    acc.entries += 1;
-    if (entry.isDirectory()) countApp(join(dir, entry.name), path + '/', acc);
-    else acc.bytes += statSync(join(dir, entry.name)).size;
-  }
-  return acc;
-}
+const handIn = () => {
+  const here = new URL('.', import.meta.url);
+  const sourceRoot = urlToPath(here);
+  const destDir = process.env.MAKEFUN_OUTPUT_DIR || '/output';
+  if (destDir === sourceRoot) die('output directory must differ from the repository root');
+  console.log(`Handing in from ${sourceRoot} to ${destDir}`);
+  const copyTree = (from, to) => cpSync(from, to, { recursive: true });
+  mkdirSync(destDir, { recursive: true });
+  copyTree(joinPath(sourceRoot, 'app'), joinPath(destDir, 'app'));
+  const shotsSrc = joinPath(sourceRoot, 'screenshots');
+  const shotsDst = joinPath(destDir, 'screenshots');
+  mkdirSync(shotsDst, { recursive: true });
+  if (existsSync(shotsSrc)) copyTree(shotsSrc, shotsDst);
 
-const shots = checkScreenshots();
-const app = countApp(join(out, 'app'), '', { entries: 0, bytes: 0 });
-if (app.entries > CAPS.app_max_files) throw new Error('self-check: app/ holds ' + app.entries + ' entries, over the cap');
-if (app.bytes > CAPS.app_max_bytes) throw new Error('self-check: app/ is ' + app.bytes + ' bytes, over the cap');
+  // The copy is the hand-in: if an entry file did not land, fail now with
+  // its name instead of handing the scorer an app with a hole in it.
+  let verified = 0;
+  for (const needed of REQUIRED_APP_FILES) {
+    if (!existsSync(joinPath(destDir, 'app', needed))) die(`app/${needed} missing from the output`);
+    verified += 1;
+  } // required files
+  console.log(`Verified ${verified} entry files in the output`);
 
-// The dossier is a JSON document; its text field opens with the Load block,
-// whose first line is the Totals line this hand-in is judged by.
-const dossierText = JSON.parse(new TextDecoder().decode(dossier)).text;
-const totalsLine = String(dossierText).split('\n').find((l) => l.startsWith('Totals:'));
-if (!totalsLine) throw new Error('self-check: the dossier text holds no Totals line');
-console.log('Handed in app/ (' + app.entries + ' entries, ' + app.bytes + ' bytes) and ' + shots.length + ' screenshots: ' + shots.join(', '));
-console.log(totalsLine);
+  const dossier = makeDossier(destDir, LIMITS);
+  if (dossier.length === 0) die('buildDossier wrote an empty dossier');
+  writeFileSync(joinPath(destDir, 'dossier.json'), dossier);
+
+  // Read the file back: a dossier.json on disk that differs from the bytes
+  // just built (a partial write, a stray process) must fail here, not at
+  // the gate.
+  if (!sameBytes(readFileSync(joinPath(destDir, 'dossier.json')), dossier)) {
+    die('dossier.json on disk differs from the dossier just built');
+  } // read-back
+
+  // Prove the dossier is a pure function of the files handed in: build it
+  // again from the output as written and compare. A mismatch is a failure
+  // now, not a surprise at the gate.
+  if (!sameBytes(makeDossier(destDir, LIMITS), dossier)) {
+    die('rebuilding the dossier from the output gave different bytes');
+  } // rebuild
+
+  const shots = checkShots(destDir);
+  const app = tallyApp(joinPath(destDir, 'app'), { entries: 0, bytes: 0 });
+  if (app.entries > LIMITS.app_max_files) die(`app/ holds ${app.entries} entries, over the cap`);
+  if (app.bytes > LIMITS.app_max_bytes) die(`app/ is ${app.bytes} bytes, over the cap`);
+
+  // The dossier is a JSON document; its text field opens with the Load
+  // block, whose first line is the Totals line this hand-in is judged by.
+  // The text itself must also fit the scorer's cap, or the hand-in is too
+  // big to grade.
+  const dossierJson = JSON.parse(new TextDecoder().decode(dossier));
+  const dossierText = dossierJson.text;
+  if (typeof dossierText !== 'string' || dossierText.length === 0) {
+    die('the dossier holds no text to grade');
+  } // text present
+  if (new TextEncoder().encode(dossierText).length > LIMITS.text_max_bytes) {
+    die(`dossier text is over the ${LIMITS.text_max_bytes} byte cap`);
+  } // text fits
+  const dossierLines = String(dossierText).split('\n');
+  const totals = dossierLines.find((line) => line.startsWith('Totals:'));
+  if (totals === undefined) die('the dossier text holds no Totals line');
+  console.log(`Handed in app/ (${app.entries} entries, ${app.bytes} bytes / ${(app.bytes / 1024).toFixed(1)} KiB) and ${shots.length} screenshots: ${shots.join('; ')}`);
+  console.log(`dossier.json: ${dossier.length} bytes`);
+  console.log(`Totals line: ${totals}`);
+}; // handIn
+
+handIn();
