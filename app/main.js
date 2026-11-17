@@ -211,8 +211,8 @@ async function route() {
   stopTicker();
   window.__shotReady = false;
   const path = location.hash.replace(/^#/, '') || '/';
-  boardLink.toggleAttribute('aria-current', path === '/');
-  if (path === '/') boardLink.setAttribute('aria-current', 'page'); else boardLink.removeAttribute('aria-current');
+  if (path === '/') boardLink.setAttribute('aria-current', 'page');
+  else boardLink.removeAttribute('aria-current');
   try {
     let m;
     if (path === '/') await boardView();
