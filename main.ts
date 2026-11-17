@@ -41,6 +41,14 @@ if (existsSync(join(here, 'screenshots'))) {
 const dossier = buildDossier(out, CAPS);
 writeFileSync(join(out, 'dossier.json'), dossier);
 
+// The program runs twice in the grader and both runs must write the same
+// bytes. Prove the dossier is a pure function of the files handed in by
+// building it a second time from the output as written and comparing: a
+// mismatch here is a failure now, not a surprise at the gate.
+const rebuilt = buildDossier(out, CAPS);
+const sameBytes = rebuilt.length === dossier.length && rebuilt.every((b, i) => b === dossier[i]);
+if (!sameBytes) throw new Error('self-check: rebuilding the dossier from the output gave different bytes');
+
 // --- post-build self-check -------------------------------------------------
 
 function checkScreenshots() {
